@@ -1,0 +1,172 @@
+---
+title: "Are Icon's worth the price?"
+author: "Derek Stevens"
+output: 
+  prettydoc::html_pretty:
+    theme: cayman
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+Fifa ultimate team is a game mode in fifa that allows players to build virtual teams comprised of real world players. Players can be randomly won by opening packs of cards containing players. These player cards then can be bought and solid via an in game market place called the transfer market.
+<br />
+
+In 2019 fifa added a new class of players was added called ICONS. These new player cards are an in game representation of legendary past players. A great example of an icon is Pele. Obviously no longer a professional soccer player, Pele has a fifa card that is meant to model his attributes as if he was playing today. The goal of this paper is to identify if Icon's are worth their price or if they're overvalued compared to other cards.
+<br />
+<div style = "width: 500px">
+![](C:\Users\derekstevens\Documents\R WorkPlace\fifa-19-fifa-ultimate-team\icon_pictures.jpg)
+</div>
+
+I will be assesing the value of an icon based on a two criteria
+
++ Price to overall
++ Ability to hold value
+
+<hr/>
+
+
+```{r}
+#loading packages
+library(tidyverse)
+library(ggthemes)
+library(knitr)
+library(scales)
+library(lubridate)
+
+```
+
+## Raw Data 
+
+The Kaggle 2019 Fifa data sets contain two piece of data. The first describes players. Each observation is a player card that describes the type of card (Icon, rare, nonrare...), player attributes, and personal information about the player such as age and nationality. Somr rows represent the same players with different stats. This is because each player may have been issued *"inform"* cards according to how they perform in the real world.
+<br />
+
+The second data set is a price history of each player card, inform or not.
+
+```{r message=FALSE}
+#reading data
+player_data <- read_csv("C:\\Users\\derekstevens\\Documents\\R WorkPlace\\fifa-19-fifa-ultimate-team\\FIFA19 - Ultimate Team players.csv")
+price_data <- read_csv("C:\\Users\\derekstevens\\Documents\\R WorkPlace\\fifa-19-fifa-ultimate-team\\FIFA19 - Ultimate Team player prices.csv")
+```
+<hr/>
+
+## Preprocessing
+
+The price data set doesn't give a good idea of which players the data is really speaking about, rather giving a *`r colnames(price_data)[1]`*
+```{r eval=TRUE}
+kable(price_data[1:3, ], caption = "Original Price Data")
+```
+
+Therefore we will join a unique identifier to the price data. The identifier will be the name and the players overall. The new data frame will look as below:
+```{r echo=FALSE, eval=TRUE}
+#adding legend status player column
+player_data <- player_data %>%
+                    mutate(is_icon = revision == "Icon")
+
+#joining data to allow for name identification on price data
+name_id <- player_data %>% select(player_name, player_id, overall, is_icon) %>%
+                  mutate(unique_id = paste(player_name, overall, sep = "_"))
+
+price_data <- left_join(price_data , name_id, by = c("futbin_id" = "player_id"))
+
+kable(price_data[1:3, ], caption = "Joined Price Data")
+
+
+#adding legend status column
+player_data <- player_data %>%
+                    mutate(is_legend = revision == "icon")
+```
+<hr />
+
+## Overall vs Price
+Getting the best performance against how much is paid is an important consideration when building your fifa ultimate team. Therefore the first topic we'll explore is whether or not Icons price to performance ration is in line with others.
+
+##Price Skew
+The first thing to note is that player valuations are especially skewed. This means for every point increase you pay a lot more as the players overall increases
+```{r}
+#creating average value column
+price_data <- price_data %>% filter(!is.na(is_icon), xbox != 0) %>% 
+                group_by(futbin_id) %>%
+                mutate(Avg_price = mean(xbox))
+
+
+
+price_data %>%
+        distinct(futbin_id, .keep_all = TRUE) %>%
+ggplot(aes(x = overall, y = Avg_price, col = is_icon)) + 
+      geom_jitter(alpha = .2) +
+      labs(x = "Overall", y = "Average Price", col = "Is Icon") +
+      scale_y_continuous(labels = dollar_format()) +
+      theme_fivethirtyeight()
+```
+
+This price chart segmented by Icon status might give us an inclenation that legends are overvalued, as generally blue dots hover above the red. This is already a bad sign that Icon's generally cost more
+
+##Price per overall
+To explore this further we will segment the data into only the players ranked above the lowest legend, and see how much then do you pay for each point increase across different card types. 
+```{r}
+price_data %>% 
+        filter(overall > 85) %>%
+        mutate(bin = cut(overall, breaks = c(0,84,90,95,100))) %>%
+        group_by(is_icon, bin) %>%
+        summarise(price_to_overall = mean(overall)/mean(Avg_price)) %>%
+        ggplot(aes(x = is_icon, y = price_to_overall, fill = is_icon)) +
+            geom_col() +
+            facet_wrap(.~bin) +
+            theme_fivethirtyeight() +
+            labs(fill = "Is Icon")
+```
+
+From this visualiztion it's clear that the true bang for your buck lies outside of the icons, and if all you're going for is value performance you're better off building a team without legends.
+
+## Holding value
+
+A general trend in the afore mentioned marketplace is that the price of players tends to trend down after january.
+```{r, echo=FALSE}
+month_price <- price_data %>% group_by(month(date, label = TRUE)) %>% summarise(Avg_price = mean(xbox))
+#the game is released in september and price data goes untill febuary of the next year
+month_order <- c("Sep","Oct","Nov","Dec", "Jan", "Feb")
+
+month_price_2 <- month_price
+
+month_price_2$`month(date, label = TRUE)` <- factor(month_price$`month(date, label = TRUE)`, levels = month_order)
+month_price_2 <- month_price_2 %>% rename(Month = `month(date, label = TRUE)`)
+
+ggplot(month_price_2, aes(x = Month, y = Avg_price, group = 1)) +
+        geom_point() +
+        geom_line() +
+        scale_y_continuous(labels = dollar_format()) +
+        theme_fivethirtyeight()
+        
+
+```
+
+Because this downward trend most players will loose value. Our next question is if Icons tend to also loose value, or if they hold their value through this decline, and serve as a hedge against this average decline.
+
+Do do this we'll group by Icon status, and then compaire their price at the beggining of december to the end of febuary, and see if their average price decreased or increased.
+
+
+```{r, eval=TRUE}
+price_diff <- price_data %>%
+                  filter(month(date) %in% c(12,2)) %>%
+                  group_by(is_icon, month(date)) %>%
+                  summarise(price = mean(xbox)) %>%
+                  arrange(`month(date)`) %>%
+                  group_by(is_icon) %>%
+                  summarise(loss = diff(price), price = max(price))
+
+price_diff %>% mutate(percent_change = -loss/price) %>%
+    ggplot(aes(x = is_icon, y = percent_change, fill = is_icon)) +
+        geom_col() +
+        coord_flip() +
+        geom_label(aes(label = round(percent_change,2)*100)) +
+        theme_fivethirtyeight()
+```
+
+So as we can see legends do in fact exactly the opposite of what you want. Rather, while the average card actually gains in value, legends loose 26% of their value over the same time period.
+
+## Conclusion
+
+After this exploritory data analysis we can conclude that legends aren't the best way to spend your in game money early in the game. This is because they do not offer good value (price per point in overall), and do not hold their value over the long term.
